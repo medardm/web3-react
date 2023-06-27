@@ -1,13 +1,9 @@
 import WalletConnectProvider from '@walletconnect/ethereum-provider'
-import { IWCEthRpcConnectionOptions } from '@walletconnect/types'
 import { AbstractConnector } from '@web3-react/abstract-connector'
 import { ConnectorUpdate } from '@web3-react/types'
+import {EthereumProviderOptions} from "@walletconnect/ethereum-provider/dist/types/EthereumProvider";
 
 export const URI_AVAILABLE = 'URI_AVAILABLE'
-
-export interface WalletConnectConnectorArguments extends IWCEthRpcConnectionOptions {
-  supportedChainIds?: number[]
-}
 
 export class UserRejectedRequestError extends Error {
   public constructor() {
@@ -17,19 +13,19 @@ export class UserRejectedRequestError extends Error {
   }
 }
 
-function getSupportedChains({ supportedChainIds, rpc }: WalletConnectConnectorArguments): number[] | undefined {
-  if (supportedChainIds) {
-    return supportedChainIds
+function getSupportedChains({ chains, rpcMap }: EthereumProviderOptions): number[] | undefined {
+  if (chains) {
+    return chains
   }
 
-  return rpc ? Object.keys(rpc).map(k => Number(k)) : undefined
+  return rpcMap ? Object.keys(rpcMap).map(k => Number(k)) : undefined
 }
 
 export class WalletConnectConnector extends AbstractConnector {
   public walletConnectProvider?: WalletConnectProvider
-  private readonly config: WalletConnectConnectorArguments
+  private readonly config: EthereumProviderOptions
 
-  constructor(config: WalletConnectConnectorArguments) {
+  constructor(config: EthereumProviderOptions) {
     super({ supportedChainIds: getSupportedChains(config) })
     this.config = config
 
@@ -68,15 +64,15 @@ export class WalletConnectConnector extends AbstractConnector {
   public async activate(): Promise<ConnectorUpdate> {
     if (!this.walletConnectProvider) {
       const WalletConnectProvider = await import('@walletconnect/ethereum-provider').then(m => m?.default ?? m)
-      this.walletConnectProvider = new WalletConnectProvider(this.config)
+      this.walletConnectProvider = await WalletConnectProvider.init(this.config)
     }
 
     // ensure that the uri is going to be available, and emit an event if there's a new uri
-    if (!this.walletConnectProvider.connector.connected) {
-      await this.walletConnectProvider.connector.createSession(
-        this.config.chainId ? { chainId: this.config.chainId } : undefined
+    if (!this.walletConnectProvider.connected) {
+      await this.walletConnectProvider.connect(
+        this.config.chains.length > 0 ? { chains: this.config.chains } : undefined
       )
-      this.emit(URI_AVAILABLE, this.walletConnectProvider.connector.uri)
+      this.emit(URI_AVAILABLE, this.walletConnectProvider?.connected)
     }
 
     let account: string
@@ -88,7 +84,7 @@ export class WalletConnectConnector extends AbstractConnector {
       }
 
       // Workaround to bubble up the error when user reject the connection
-      this.walletConnectProvider!.connector.on('disconnect', () => {
+      this.walletConnectProvider!.on('disconnect', () => {
         // Check provider has not been enabled to prevent this event callback from being called in the future
         if (!account) {
           userReject()
